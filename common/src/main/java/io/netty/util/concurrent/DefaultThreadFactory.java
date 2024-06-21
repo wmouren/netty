@@ -102,6 +102,8 @@ public class DefaultThreadFactory implements ThreadFactory {
 
     @Override
     public Thread newThread(Runnable r) {
+        // 将提交的任务包装为 FastThreadLocalRunnable 交给 FastThreadLocalThread 执行
+        // 线程名称默认是 nioEventLoopGroup-x 自增
         Thread t = newThread(FastThreadLocalRunnable.wrap(r), prefix + nextId.incrementAndGet());
         try {
             if (t.isDaemon() != daemon) {

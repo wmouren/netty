@@ -22,6 +22,19 @@ import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.Objects;
 
+/**
+ * Netty 使用 `SelectedSelectionKeySet` 替换原生的 `Set<SelectionKey>` 主要是为了提高性能。
+ *
+ * 在 Java NIO 中，`Selector` 的 `selectedKeys()` 方法返回的是一个 `Set<SelectionKey>`，这个集合包含了所有就绪的 `SelectionKey`。在事件循环中，Netty 需要遍历这个集合，处理每一个就绪的 `SelectionKey`。
+ *
+ * 然而，`Set<SelectionKey>` 的实现（通常是 `HashSet`）并不是为高性能事件循环设计的。它的 `iterator()` 方法每次调用都会创建一个新的 `Iterator` 对象，这会导致不必要的对象创建和垃圾回收开销。
+ * 此外，`HashSet` 的 `add()` 和 `remove()` 方法也有一定的开销，因为它们需要维护 `HashSet` 的内部状态。
+ *
+ * 为了解决这些问题，Netty 引入了 `SelectedSelectionKeySet`。`SelectedSelectionKeySet` 是一个特殊的集合，
+ * 它的 `iterator()` 方法不会创建新的 `Iterator` 对象，而是复用一个预先创建的 `Iterator`。此外，`SelectedSelectionKeySet` 的 `add()` 方法是一个简单的数组操作，比 `HashSet` 的 `add()` 方法更快。
+ *
+ * 通过使用 `SelectedSelectionKeySet`，Netty 能够减少对象创建和垃圾回收的开销，提高事件循环的性能。
+ */
 final class SelectedSelectionKeySet extends AbstractSet<SelectionKey> {
 
     SelectionKey[] keys;

@@ -39,20 +39,44 @@ import java.util.concurrent.RejectedExecutionException;
 
 /**
  * A skeletal {@link Channel} implementation.
+ *
+ * AbstractChannel 实现了 Channel 接口，是 Channel 的骨架实现类，提供了 Channel 接口的默认实现。
+ * AbstractChannel 融合了 Netty 的线程模型、事件驱动模型
+ *
+ * 不同协议、不同阻塞类型的连接有不同的 Channel 类型与之对应，因此 AbstractChannel 并没有与网络I/O直接相关的操作。而是将具体的 I/O 操作委托给了一个内部类 AbstractUnsafe。
+ * 每种阻塞与非阻塞Channel在 AbstractChannel 上都会继续抽象一层，如 AbstractNioChannel
+ *
+ *
+ *
+ * AbstractChannel 和 AbstractUnsafe 直接的联系和这种设计思想：
+ * `AbstractChannel` 和 `AbstractUnsafe` 的设计主要是基于责任分离的原则。在 Netty 的设计中，`AbstractChannel` 主要负责维护 Channel 的状态，如是否打开、是否活跃等，以及提供一些基本的操作，如读、写、连接、绑定等。
+ * 然而，这些操作的具体实现是由 `AbstractUnsafe` 来完成的。
+ *
+ * `AbstractUnsafe` 是一个抽象类，它定义了 Channel 的所有 I/O 操作，如 bind、connect、disconnect、close、write、flush 等。这些方法的具体实现是由具体的 Channel 实现类来完成的，
+ * 这样做的好处是可以根据不同的协议和阻塞类型来提供不同的实现，增加了代码的灵活性。
+ *
+ * 这种设计思想的好处是，它将 Channel 的状态管理和 I/O 操作分离，使得代码更加清晰，职责更加明确。同
+ * 时，由于 I/O 操作的具体实现是由具体的 Channel 类来完成的，这使得 Netty 可以支持多种不同的协议和阻塞类型，增强了其扩展性。
+ *
+ *
  */
 public abstract class AbstractChannel extends DefaultAttributeMap implements Channel {
 
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(AbstractChannel.class);
 
     private final Channel parent;
+    // 全局唯一得id
     private final ChannelId id;
+    // 实现具体的连接与读/写数据，如网络的读/写、链路关闭、发起连接等。命名为Unsafe表示不对外提供使用，并非不安全。
     private final Unsafe unsafe;
+    //一个Handler的容器，也可以将其理 解为一个Handler链。Handler主要处理数据的编/解码和业务逻辑。  事件驱动
     private final DefaultChannelPipeline pipeline;
     private final VoidChannelPromise unsafeVoidPromise = new VoidChannelPromise(this, false);
     private final CloseFuture closeFuture = new CloseFuture(this);
 
     private volatile SocketAddress localAddress;
     private volatile SocketAddress remoteAddress;
+    // 每个Channel对应一条EventLoop线程
     private volatile EventLoop eventLoop;
     private volatile boolean registered;
     private boolean closeInitiated;
@@ -115,6 +139,8 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
 
     /**
      * Returns a new {@link DefaultChannelPipeline} instance.
+     *
+     * ChannelPipeline
      */
     protected DefaultChannelPipeline newChannelPipeline() {
         return new DefaultChannelPipeline(this);
@@ -425,6 +451,8 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
 
     /**
      * {@link Unsafe} implementation which sub-classes must extend and use.
+     *
+     * AbstractUnsafe 使用了大量的模板方法模式，将 Channel 的 I/O 操作委托给具体的 Channel 实现类来完成。
      */
     protected abstract class AbstractUnsafe implements Unsafe {
 
@@ -536,6 +564,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             }
         }
 
+        // 服务端 NioServerSocketChannel 的 doRegister 方法
         @Override
         public final void bind(final SocketAddress localAddress, final ChannelPromise promise) {
             assertEventLoop();
@@ -559,13 +588,16 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
 
             boolean wasActive = isActive();
             try {
+                // 模板设计模式：调用子类 NioServerSocketChannel 的 doBind 方法
                 doBind(localAddress);
             } catch (Throwable t) {
+                // 绑定失败回调
                 safeSetFailure(promise, t);
                 closeIfClosed();
                 return;
             }
 
+            // 从非活跃状态变为活跃状态触发 active 事件
             if (!wasActive && isActive()) {
                 invokeLater(new Runnable() {
                     @Override
@@ -575,6 +607,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 });
             }
 
+            // 绑定成功回调通知
             safeSetSuccess(promise);
         }
 
@@ -843,6 +876,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             }
         }
 
+        // 将消息写入 ChannelOutboundBuffer 缓冲区中 等待 flush 方法将消息写入到 socket 缓冲区
         @Override
         public final void write(Object msg, ChannelPromise promise) {
             assertEventLoop();
@@ -878,6 +912,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 }
                 return;
             }
+
 
             outboundBuffer.addMessage(msg, size, promise);
         }
@@ -928,6 +963,7 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
             }
 
             try {
+                // 通过具体的 Channel 实现类的 doWrite 方法将消息写入到 socket 缓冲区
                 doWrite(outboundBuffer);
             } catch (Throwable t) {
                 handleWriteError(t);

@@ -23,9 +23,16 @@ import io.netty.util.internal.ReferenceCountUpdater;
 /**
  * Abstract base class for {@link ByteBuf} implementations that count references.
  */
+
+/**
+ * Netty在进行I/O的读/写时使用了堆外直接内存，实现了零拷贝，堆外直接内存Direct Buffer的分配与回收效率要远远低于JVM堆内存上对象的创建与回收速率。
+ * Netty使用引用计数法来管理Buffer的引用与释放。Netty采用了内存池设计，先分配一块大内存，然后不断地重复利用这块内存。
+ * 例如，当从SocketChannel中读取数据时，先在大内存块中切一小部分来使用，由于与大内存共享缓存区，所以需要增加大内存的引用值，当用完小内存后，再将其放回大内存块中，同时减少其引用值。
+ */
 public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
     private static final long REFCNT_FIELD_OFFSET =
             ReferenceCountUpdater.getUnsafeOffset(AbstractReferenceCountedByteBuf.class, "refCnt");
+    // AtomicIntegerFieldUpdater 在jctools中也有使用 用于更新字段的值 不同类型的内存屏障
     private static final AtomicIntegerFieldUpdater<AbstractReferenceCountedByteBuf> AIF_UPDATER =
             AtomicIntegerFieldUpdater.newUpdater(AbstractReferenceCountedByteBuf.class, "refCnt");
 
@@ -41,6 +48,8 @@ public abstract class AbstractReferenceCountedByteBuf extends AbstractByteBuf {
         }
     };
 
+    // 有多线程操作使用 volatile 修饰, 保证可见性.再配合 AtomicIntegerFieldUpdater 使用 保证原子性
+    //通过AtomicIntegerFieldUpdater来更新refCnt的值，而没有采用AtomicInteger类型。因为AtomicInteger类型创建的对象比int类型多占用16B的对象头，当有几十万或几百万ByteBuf对象时，节约的内存可能就是几十MB或几百MB。
     // Value might not equal "real" reference count, all access should be via the updater
     @SuppressWarnings({"unused", "FieldMayBeFinal"})
     private volatile int refCnt;

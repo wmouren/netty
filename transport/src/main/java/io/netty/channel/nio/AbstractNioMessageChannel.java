@@ -66,9 +66,12 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
         @Override
         public void read() {
             assert eventLoop().inEventLoop();
+            // 获取 channel 得配置对象
             final ChannelConfig config = config();
             final ChannelPipeline pipeline = pipeline();
+            // 获取计算内存分配 Handle
             final RecvByteBufAllocator.Handle allocHandle = unsafe().recvBufAllocHandle();
+            // 清空上次得记录
             allocHandle.reset(config);
 
             boolean closed = false;
@@ -76,6 +79,10 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
             try {
                 try {
                     do {
+                        /**
+                         * 调用子类得 doReadMessages 方法，读取数据包，并放入 readBuf 中
+                         * 当成功读取时返回 1
+                         */
                         int localRead = doReadMessages(readBuf);
                         if (localRead == 0) {
                             break;
@@ -84,8 +91,9 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
                             closed = true;
                             break;
                         }
-
+                        // 记录成功读取得次数
                         allocHandle.incMessagesRead(localRead);
+                    //     默认不超过 16 次
                     } while (continueReading(allocHandle));
                 } catch (Throwable t) {
                     exception = t;
@@ -169,6 +177,7 @@ public abstract class AbstractNioMessageChannel extends AbstractNioChannel {
         } else {
             // Did not write all messages.
             if ((interestOps & SelectionKey.OP_WRITE) == 0) {
+                // 若没有写完，则将 OP_WRITE 事件添加到 key 中
                 key.interestOps(interestOps | SelectionKey.OP_WRITE);
             }
         }

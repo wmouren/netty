@@ -56,6 +56,7 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
     private static final Method OPEN_SERVER_SOCKET_CHANNEL_WITH_FAMILY =
             SelectorProviderUtil.findOpenMethod("openServerSocketChannel");
 
+    // 创建 NIO 的 ServerSocketChannel 这里使用反射创建是为了兼容不同版本的jdk
     private static ServerSocketChannel newChannel(SelectorProvider provider, InternetProtocolFamily family) {
         try {
             ServerSocketChannel channel =
@@ -151,10 +152,12 @@ public class NioServerSocketChannel extends AbstractNioMessageChannel
 
     @Override
     protected int doReadMessages(List<Object> buf) throws Exception {
+        // 调用serverSocketChannel.accept()方法，接受客户端的连接
         SocketChannel ch = SocketUtils.accept(javaChannel());
 
         try {
             if (ch != null) {
+                // 每个链接创建一个NioSocketChannel
                 buf.add(new NioSocketChannel(this, ch));
                 return 1;
             }

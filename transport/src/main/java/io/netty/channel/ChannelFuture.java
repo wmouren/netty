@@ -162,7 +162,15 @@ import java.util.concurrent.TimeUnit;
  * }
  * </pre>
  */
+
+
 public interface ChannelFuture extends Future<Void> {
+    /**
+     * ，ChannelFuture和ChannelPromise都是用于处理异步操作的结果，但是ChannelFuture是只读的，主要用于接收结果，ChannelPromise是可写的，主要用于触发结果。
+     *
+     * ChannelFuture 是由框架内部通知调用者的结果，ChannelPromise 是由调用者通知框架的结果。
+     */
+
 
     /**
      * Returns a channel where the I/O operation associated with this

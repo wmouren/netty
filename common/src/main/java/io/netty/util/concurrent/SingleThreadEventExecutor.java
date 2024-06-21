@@ -364,6 +364,8 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
      * Poll all tasks from the task queue and run them via {@link Runnable#run()} method.
      *
      * @return {@code true} if and only if at least one task was run
+     *
+     * runAllTasks：主要目的是执行taskQueue队列和定时任务队列中的任务，如心跳检测、异步写操作等。
      */
     protected boolean runAllTasks() {
         assert inEventLoop();
@@ -371,7 +373,9 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
         boolean ranAtLeastOne = false;
 
         do {
+            // 从定时任务队列中获取任务然后丢给 taskQueue 队列
             fetchedAll = fetchFromScheduledTaskQueue();
+            // 运行 taskQueue 队列中的任务
             if (runAllTasksFrom(taskQueue)) {
                 ranAtLeastOne = true;
             }
@@ -556,6 +560,10 @@ public abstract class SingleThreadEventExecutor extends AbstractScheduledEventEx
         }
     }
 
+    /**
+     * 判断给定的线程是否是 EventLoop 绑定的线程
+     *  Netty 确保线程安全，避免阻塞，正确释放资源的重要机制。
+     */
     @Override
     public boolean inEventLoop(Thread thread) {
         return thread == this.thread;

@@ -32,6 +32,7 @@ import io.netty.channel.socket.SocketChannelConfig;
 import io.netty.util.internal.StringUtil;
 
 import java.io.IOException;
+import java.net.Socket;
 import java.nio.channels.SelectableChannel;
 import java.nio.channels.SelectionKey;
 
@@ -46,6 +47,8 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
             " (expected: " + StringUtil.simpleClassName(ByteBuf.class) + ", " +
             StringUtil.simpleClassName(FileRegion.class) + ')';
 
+    // 主要负责刷新发送缓存链表中的数据 ， 由于 write 的数据没有直接写在Socket中，而是写在了
+    // ChannelOutboundBuffer缓存中，所以当调用flush()方法时，会把数据写入Socket中并向网络中发送
     private final Runnable flushTask = new Runnable() {
         @Override
         public void run() {
@@ -216,14 +219,18 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
         if (msg instanceof ByteBuf) {
             ByteBuf buf = (ByteBuf) msg;
             if (!buf.isReadable()) {
+                // 若可读字节数为0，则直接移除
                 in.remove();
                 return 0;
             }
 
+            // 实际发送的字节数 往 socket 中写数据
             final int localFlushedAmount = doWriteBytes(buf);
             if (localFlushedAmount > 0) {
+                // 若发送成功，则更新进度
                 in.progress(localFlushedAmount);
                 if (!buf.isReadable()) {
+                    // 若可读字节数为0，则直接移除
                     in.remove();
                 }
                 return 1;
@@ -247,23 +254,40 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
             // Should not reach here.
             throw new Error();
         }
+        // 当实际发送的字节数为0时，返回 WRITE_STATUS_SNDBUF_FULL
         return WRITE_STATUS_SNDBUF_FULL;
     }
 
+    // 从ChannelOutboundBuffer缓存中
+    // 获取待发送的数据，进行循环发送，发送的结果分为以下3种
+    // （1）发送成功，跳出循环直接返回
+    // （2）由于TCP缓存区已满，成功发送的字节数为0，跳出循环，并将写操作OP_WRITE事件添加到选择Key兴趣事件集中。
+    // （3）默认当写了16次数据还未发送完时，把选择Key的OP_WRITE 事件从兴趣事件集中移除，并添加一个flushTask任务，先去执行其他
+    // 任务，当检测到此任务时再发送
     @Override
     protected void doWrite(ChannelOutboundBuffer in) throws Exception {
         int writeSpinCount = config().getWriteSpinCount();
         do {
+            // 获取当前channel 的缓存 ChannelOutboundBuffer 中的当前待刷新的消息
             Object msg = in.current();
+            // 所有消息都已经发送完毕
             if (msg == null) {
                 // Wrote all messages.
+                // 清除OP_WRITE事件
                 clearOpWrite();
                 // Directly return here so incompleteWrite(...) is not called.
                 return;
             }
+            // 发送数据
             writeSpinCount -= doWriteInternal(in, msg);
         } while (writeSpinCount > 0);
 
+        /**
+         * 当因缓存区满了而发送失败时
+         * doWriteInternal() 返回 WRITE_STATUS_SNDBUF_FULL
+         * 此时 writeSpinCount < 0 为 true
+         * 当写了16次数据还未发送完时，但每次写都成功时，writeSpinCount 会等于 0
+         */
         incompleteWrite(writeSpinCount < 0);
     }
 
@@ -289,15 +313,20 @@ public abstract class AbstractNioByteChannel extends AbstractNioChannel {
     protected final void incompleteWrite(boolean setOpWrite) {
         // Did not write completely.
         if (setOpWrite) {
+            // 将OP_WRITE事件添加到选择Key兴趣事件集中 此时是写缓存区满了，需要等待缓存区有空间再写
             setOpWrite();
         } else {
             // It is possible that we have set the write OP, woken up by NIO because the socket is writable, and then
             // use our write quantum. In this case we no longer want to set the write OP because the socket is still
             // writable (as far as we know). We will find out next time we attempt to write if the socket is writable
             // and set the write OP if necessary.
+
+            // 清除OP_WRITE事件 此时是写了16次数据还未发送完时，把选择Key的OP_WRITE 事件从兴趣事件集中移除
+            // 并添加一个flushTask任务，先去执行其他任务，当检测到此任务时再发送
             clearOpWrite();
 
             // Schedule flush again later so other tasks can be picked up in the meantime
+            // 循环写入数据超过16次，将OP_WRITE事件从兴趣事件集中移除，并添加一个flushTask任务，先去执行其他任务，当检测到此任务时再发送
             eventLoop().execute(flushTask);
         }
     }

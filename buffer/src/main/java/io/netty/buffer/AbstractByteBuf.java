@@ -44,6 +44,19 @@ import static io.netty.util.internal.ObjectUtil.checkPositiveOrZero;
 /**
  * A skeletal implementation of a buffer.
  */
+
+/**
+ * 0个或多个字节(字节组)的随机和顺序可访问序列。该接口提供了一个或多个基本字节数组(byte[])和 NIO 缓冲区的 *抽象视图* 。
+ *
+ * netty 内部实现了一个内存池，内存池是由一定大小和数量的内存块ByteBuf组成的，这些内存块的大小默认为16MB。
+ * 当从Channel中读取数据时，无须每次都分配新的ByteBuf，只需从大的内、存块中共享一份内存，并初始化其大小及独立维护读/写指针即可。
+ * Netty采用对象引用计数，需要手动回收。每复制一份ByteBuf或派生、 出新的ByteBuf，其引用值都需要增加
+ *
+ *
+ *  名为 read or skip 开头的方法会影响 readerIndex ，而名为 write 开头的方法会影响 writerIndex。
+ *
+ *  clear 方法会将读写指针都设置为 0，但是不会清空数据，只是将读写指针设置为 0，数据还在。
+ */
 public abstract class AbstractByteBuf extends ByteBuf {
     private static final InternalLogger logger = InternalLoggerFactory.getInstance(AbstractByteBuf.class);
     private static final String LEGACY_PROP_CHECK_ACCESSIBLE = "io.netty.buffer.bytebuf.checkAccessible";
@@ -68,10 +81,20 @@ public abstract class AbstractByteBuf extends ByteBuf {
     static final ResourceLeakDetector<ByteBuf> leakDetector =
             ResourceLeakDetectorFactory.instance().newResourceLeakDetector(ByteBuf.class);
 
+    // 独立维护了读写指针
     int readerIndex;
     int writerIndex;
+
+    // 标记读写指针
+    /**
+     * 在解码时，由于消息不完整，无法处理
+     * 需要将 readerIndex 复位，此时需要先为索引做个标记
+     * 以便在解码器重新解码时，能够恢复到解码前的状态
+     */
     private int markedReaderIndex;
     private int markedWriterIndex;
+
+    // 最大容量
     private int maxCapacity;
 
     protected AbstractByteBuf(int maxCapacity) {
@@ -281,14 +304,20 @@ public abstract class AbstractByteBuf extends ByteBuf {
         return this;
     }
 
+    // 检查容量是否足够，不够则扩容
     final void ensureWritable0(int minWritableBytes) {
+
         final int writerIndex = writerIndex();
         final int targetCapacity = writerIndex + minWritableBytes;
         // using non-short-circuit & to reduce branching - this is a hot path and targetCapacity should rarely overflow
+        // 获取当前写索引 计算写当前写索引+需要写入的字节数 判断如果当前容量足够则直接返回
         if (targetCapacity >= 0 & targetCapacity <= capacity()) {
+            // 获取 ByteBuf 对象的引用技术
+            // 如果返回值为零，则说明该对象被销毁，会抛出异常
             ensureAccessible();
             return;
         }
+        // 检查边界 如果要写入的字节数小于0或者大于最大容量则抛出异常
         if (checkBounds && (targetCapacity < 0 || targetCapacity > maxCapacity)) {
             ensureAccessible();
             throw new IndexOutOfBoundsException(String.format(
@@ -297,11 +326,15 @@ public abstract class AbstractByteBuf extends ByteBuf {
         }
 
         // Normalize the target capacity to the power of 2.
+        // 计算自动扩容后的容量，需要满足最小容量，必须是 2 的幂数
         final int fastWritable = maxFastWritableBytes();
+        // 获取最大可写字节数 如果大于等于需要写入的字节数则直接扩容到需要写入的字节数
+        // 否则通过 calculateNewCapacity 计算新的容量
         int newCapacity = fastWritable >= minWritableBytes ? writerIndex + fastWritable
                 : alloc().calculateNewCapacity(targetCapacity, maxCapacity);
 
         // Adjust to the new capacity.
+        // 由子类将容量调整到新的容量值
         capacity(newCapacity);
     }
 
@@ -892,8 +925,11 @@ public abstract class AbstractByteBuf extends ByteBuf {
 
     @Override
     public ByteBuf readBytes(byte[] dst, int dstIndex, int length) {
+        // 检查 ByteBuf 是否有足够的可读字节
         checkReadableBytes(length);
+        // 数据具体的读操作由子类实现
         getBytes(readerIndex, dst, dstIndex, length);
+        // 调整读索引
         readerIndex += length;
         return this;
     }
@@ -1070,8 +1106,11 @@ public abstract class AbstractByteBuf extends ByteBuf {
 
     @Override
     public ByteBuf writeBytes(byte[] src, int srcIndex, int length) {
+        // 确保可写，当容量不足时自动扩容
         ensureWritable(length);
+        // 缓冲区真正的写操作由子类实现
         setBytes(writerIndex, src, srcIndex, length);
+        // 调整写索引
         writerIndex += length;
         return this;
     }
@@ -1098,6 +1137,18 @@ public abstract class AbstractByteBuf extends ByteBuf {
         return this;
     }
 
+    /**
+     * 写操作writeBytes()方法涉及扩容，在扩容时除了合法校验，还需要计算新的容量值，若内存大小为2的整数次幂，
+     * 则AbstractByteBuf的子类比较好分配内存，因此扩容后的大小必须是2的整数次幂
+     *
+     *
+     * 在Netty的`ByteBuf`中，扩容时选择2的整数次幂作为新的容量，主要是为了优化内存分配和数据访问。具体来说，有以下几点原因：
+     * 1. 内存对齐：在许多系统中，内存分配器会将内存块对齐到2的整数次幂的边界，这样可以提高内存访问的效率。因此，如果`ByteBuf`的容量是2的整数次幂，那么它可能更好地利用这种内存对齐。
+     * 2. 快速计算：如果`ByteBuf`的容量是2的整数次幂，那么可以使用位运算来进行一些快速计算，例如计算索引或者确定一个位置是否在`ByteBuf`的范围内。
+     * 3. 避免内存碎片：如果`ByteBuf`的容量总是2的整数次幂，那么在进行扩容或者缩容时，可以更好地避免内存碎片的产生。
+     *
+     *
+     */
     @Override
     public ByteBuf writeBytes(ByteBuf src, int srcIndex, int length) {
         ensureWritable(length);

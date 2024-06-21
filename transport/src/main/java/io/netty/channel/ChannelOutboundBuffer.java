@@ -51,6 +51,7 @@ import static java.lang.Math.min;
  * </ul>
  * </p>
  */
+// ChannelOutboundBuffer netty 出站数据缓冲区
 public final class ChannelOutboundBuffer {
     // Assuming a 64-bit JVM:
     //  - 16 bytes object header
@@ -407,6 +408,14 @@ public final class ChannelOutboundBuffer {
      * @param maxBytes A hint toward the maximum number of bytes to include as part of the return value. Note that this
      *                 value maybe exceeded because we make a best effort to include at least 1 {@link ByteBuffer}
      *                 in the return value to ensure write progress is made.
+     */
+    /**
+     *
+     * 在Netty中，`ChannelOutboundBuffer`的`nioBuffers`方法会返回一个`ByteBuffer`数组，这个数组中的每个`ByteBuffer`都直接引用了`ByteBuf`中的内存区域，而不是复制了数据。
+     * 这样，当数据被写入到网络时，可以直接从这些`ByteBuffer`中读取数据，而不需要额外的数据拷贝。
+     *
+     * 这种设计可以提高数据写入的效率，特别是当需要写入的数据量很大时，可以显著减少数据拷贝带来的开销。
+     * 同时，这种设计也使得Netty可以更好地利用Java NIO的gather写（即一次写入多个`ByteBuffer`）的能力，进一步提高写入的效率。
      */
     public ByteBuffer[] nioBuffers(int maxCount, long maxBytes) {
         assert maxCount > 0;

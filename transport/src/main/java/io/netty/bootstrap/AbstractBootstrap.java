@@ -285,12 +285,15 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
     }
 
     private ChannelFuture doBind(final SocketAddress localAddress) {
+        // 初始化 channel 并注册到 EventLoop 中
         final ChannelFuture regFuture = initAndRegister();
         final Channel channel = regFuture.channel();
+        // 如果注册失败直接返回
         if (regFuture.cause() != null) {
             return regFuture;
         }
 
+        // 如果注册成功 则绑定本地地址端口
         if (regFuture.isDone()) {
             // At this point we know that the registration was complete and successful.
             ChannelPromise promise = channel.newPromise();
@@ -310,6 +313,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
                     } else {
                         // Registration was successful, so set the correct executor to use.
                         // See https://github.com/netty/netty/issues/2586
+                        // 只有注册成功后才能绑定本地地址端口
                         promise.registered();
 
                         doBind0(regFuture, channel, localAddress, promise);
@@ -323,9 +327,14 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
     final ChannelFuture initAndRegister() {
         Channel channel = null;
         try {
+            // 通过 channelFactory(反射的方式创建) 获取对应的 channel
             channel = channelFactory.newChannel();
+            // 初始化 channel 由子类实现
+            //初始化 NioServerSocketChannel 设置 Channel 的参数，为 Worker 线程管理的 SocketChannel 准备好参数及其 Handler 消息处理器
             init(channel);
         } catch (Throwable t) {
+            // 初始化处理失败
+            // 创建 DefaultChannelPromise 实例，并设置异常并返回
             if (channel != null) {
                 // channel can be null if newChannel crashed (eg SocketException("too many open files"))
                 channel.unsafe().closeForcibly();
@@ -336,7 +345,13 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
             return new DefaultChannelPromise(new FailedChannel(), GlobalEventExecutor.INSTANCE).setFailure(t);
         }
 
+        // 如果是 ServerBootstrap 将channel注册到EventLoopGroup中
+        // 这里的group 是NioEventLoopGroup boss 线程 注册的是ServerSocketChannel
+
+        // 这里主要是在本机绑定本地地址端口 将本地地址端口的channel注册到EventLoopGroup中
+        // 调用 SingleThreadEventLoop 的 register 方法  最终触发了 AbstractUnsafe 的 register 方法
         ChannelFuture regFuture = config().group().register(channel);
+        // 注册异常处理
         if (regFuture.cause() != null) {
             if (channel.isRegistered()) {
                 channel.close();
@@ -354,6 +369,19 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
         //         because bind() or connect() will be executed *after* the scheduled registration task is executed
         //         because register(), bind(), and connect() are all bound to the same thread.
 
+        /**
+         * 这段注释比较长，主要讲述channel注册成功后的一些操作
+         * bind或connect操作需要在register完成后执行
+         * 此处涉及线程切换，因为ServerBootstrap运行在主线程上,面register、bind、connect 需要在NioEventLoop线程上执行
+         *
+         * 注释翻译如下:
+         *
+         * 如果程序到这里，则说明promise没有失数，可能发生以下情况:
+         * (1)如果尝试将channel注册到EventLoop上，且此时注册已经完成则EventLoop返回true，channel已经注册成功 可以安全调用bind()或connect()
+         * (2)如果尝试注册到另一个线程上，即inEventLoop返回false则此时register请求已成功添加到事件循环的任务中现在同样可以尝试调用bind()或connect()
+         *
+         * 因为register()、bind()和connect()都被绑定在同一个I/0线程上,所以在执行完register Task之后，bind()或connect()才会被执行
+         */
         return regFuture;
     }
 
@@ -373,6 +401,7 @@ public abstract class AbstractBootstrap<B extends AbstractBootstrap<B, C>, C ext
 
         // This method is invoked before channelRegistered() is triggered.  Give user handlers a chance to set up
         // the pipeline in its channelRegistered() implementation.
+        // 交给 channel 注册的 eventLoop 线程去执行 bind 操作 保证 channel 的所有操作都在同一个线程中
         channel.eventLoop().execute(new Runnable() {
             @Override
             public void run() {

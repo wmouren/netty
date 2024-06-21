@@ -109,7 +109,9 @@ class PooledHeapByteBuf extends PooledByteBuf<byte[]> {
 
     @Override
     public final ByteBuf getBytes(int index, byte[] dst, int dstIndex, int length) {
+        // 检查可读可写的容量是否足够
         checkDstIndex(index, length, dstIndex, dst.length);
+        // 拷贝数据 堆内存拷贝
         System.arraycopy(memory, idx(index), dst, dstIndex, length);
         return this;
     }
