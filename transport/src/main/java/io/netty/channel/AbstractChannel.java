@@ -504,6 +504,8 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
 
             AbstractChannel.this.eventLoop = eventLoop;
 
+            // 判断当前执行线程和 channel 绑定的eventLoop是否是同一个线程 
+            // 如果是直接执行  如果不是将当前任务提交到eventLoop中包装为一个任务提交到当前的队列中
             if (eventLoop.inEventLoop()) {
                 register0(promise);
             } else {
@@ -533,6 +535,8 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                     return;
                 }
                 boolean firstRegistration = neverRegistered;
+                // 此方法调用 AbstractNioChannel 的 doRegister 方法
+                // NioServerSocketChannel 和 NioSocketChannel 的注册抽象出来
                 doRegister();
                 neverRegistered = false;
                 registered = true;
@@ -541,12 +545,17 @@ public abstract class AbstractChannel extends DefaultAttributeMap implements Cha
                 // user may already fire events through the pipeline in the ChannelFutureListener.
                 pipeline.invokeHandlerAddedIfNeeded();
 
+                // 此方法会触发 promise 的监听
                 safeSetSuccess(promise);
                 pipeline.fireChannelRegistered();
                 // Only fire a channelActive if the channel has never been registered. This prevents firing
                 // multiple channel actives if the channel is deregistered and re-registered.
                 if (isActive()) {
                     if (firstRegistration) {
+                        /**
+                         * 此方法会触发 HeadContext 的 channelActive 方法，并最终调用 AbstractNioChannel 的 doBeginRead 方法注册监听 OP_READ 事件
+                         *
+                         */
                         pipeline.fireChannelActive();
                     } else if (config().isAutoRead()) {
                         // This channel was registered before and autoRead() is set. This means we need to begin read
