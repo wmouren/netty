@@ -213,6 +213,8 @@ public interface ChannelConfig {
      * queued in the write buffer exceeds this value, {@link Channel#isWritable()}
      * will start to return {@code false}.
      */
+
+    // 最大水位值
     int getWriteBufferHighWaterMark();
 
     /**
